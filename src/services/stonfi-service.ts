@@ -1,10 +1,11 @@
-import { Address, beginCell, toNano, Cell } from "ton";
-import { SendTransactionRequest, TonConnectUI } from "@tonconnect/ui-react";
+import { Address, toNano, fromNano } from "ton";
+import { TonConnectUI } from "@tonconnect/ui-react";
 import { CHAIN } from "@tonconnect/sdk";
 import { getNetwork } from "lib/hooks/useNetwork";
-import { getClient } from "lib/get-ton-client";
-import { waitForSeqno } from "lib/utils";
-import { makeGetCall, cellToAddress } from "lib/make-get-call";
+import { StonApiClient } from "@ston-fi/api";
+import { dexFactory } from "@ston-fi/sdk";
+import { TonClient } from "@ton/ton";
+import BN from "bn.js";
 
 /**
  * STON.fi REST API Base URLs
@@ -17,247 +18,317 @@ const STONFI_API_TESTNET = "https://api-testnet.ston.fi";
  */
 const TON_ADDRESS = "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c";
 
-/**
- * STON.fi Router Contract Addresses
- * NOTE: These addresses should be verified from STON.fi's official documentation
- * Mainnet router: Check STON.fi docs for latest address
- * Testnet router: Check STON.fi docs for latest address
- *
- * For now, using placeholder addresses. The deep link method (recommended) doesn't require these.
- * If using direct contract interaction, verify addresses from:
- * - https://docs.ston.fi/
- * - https://github.com/ston-fi
- */
-// Router addresses - converting URL-safe format (_ and -) to standard format (+ and /) for Address.parse
-const STONFI_ROUTER_MAINNET = "EQD0vdSA+NedR9uvbgN9EikRX/suesDxGeFg69XQMavfLqIoB";
-const STONFI_ROUTER_TESTNET = "EQD0vdSA+NedR9uvbgN9EikRX/suesDxGeFg69XQMavfLqIoB";
-
-/**
- * STON.fi Factory Contract Addresses
- * NOTE: Verify these addresses from STON.fi's official documentation
- */
-const STONFI_FACTORY_MAINNET = "EQCkR1cGmnsE45N4K0otPl5EnxnRakmGqeJUNua5fkWhales";
-const STONFI_FACTORY_TESTNET = "EQCkR1cGmnsE45N4K0otPl5EnxnRakmGqeJUNua5fkWhales";
-
 export interface CreatePoolParams {
   tokenAddress: Address;
   tonAmount: string; // TON amount in human-readable format (e.g., "10")
   walletAddress: string;
 }
 
-export interface AddLiquidityParams {
-  tokenAddress: Address;
-  tonAmount: string;
-  tokenAmount: string; // Token amount in human-readable format
-  walletAddress: string;
-}
-
-export interface PoolInfo {
-  address: string;
-  token0_address: string;
-  token1_address: string;
-  reserve0: string;
-  reserve1: string;
-  lp_total_supply: string;
-}
-
-interface PoolsResponse {
-  pools: PoolInfo[];
+export interface LiquiditySimulation {
+  provisionType: string;
+  poolAddress: string;
+  router?: {
+    address: string;
+    ptonMasterAddress: string;
+  };
+  tokenA: string;
+  tokenB: string;
+  tokenAUnits: string;
+  tokenBUnits: string;
+  lpAccountAddress: string;
+  estimatedLpUnits: string;
+  minLpUnits: string;
+  priceImpact?: string;
 }
 
 class StonFiService {
-  private getApiBaseUrl(): string {
-    const network = getNetwork(new URLSearchParams(window.location.search));
-    return network === "testnet" ? STONFI_API_TESTNET : STONFI_API_MAINNET;
-  }
+  private apiClient: StonApiClient;
+  private tonClient: TonClient | null = null;
 
-  private getRouterAddress(): Address {
+  constructor() {
     const network = getNetwork(new URLSearchParams(window.location.search));
-    const addressStr = network === "testnet" ? STONFI_ROUTER_TESTNET : STONFI_ROUTER_MAINNET;
-    // Parse address - constants are in standard base64 format
-    return Address.parse(addressStr);
+    const apiUrl = network === "testnet" ? STONFI_API_TESTNET : STONFI_API_MAINNET;
+    this.apiClient = new StonApiClient({ baseUrl: apiUrl });
   }
 
   /**
-   * Check if a pool exists for the given token pair using STON.fi API
+   * Initialize TON client if needed
+   * Note: API key is optional but recommended for higher rate limits
+   * Get your free API key from: https://toncenter.com/my
+   * Or use @orbs-network/ton-access for automatic endpoint selection
    */
-  async checkPoolExists(tokenAddress: Address): Promise<boolean> {
-    try {
-      const pool = await this.getPoolInfo(tokenAddress);
-      return pool !== null;
-    } catch (error) {
-      console.error("Error checking pool existence:", error);
-      return false;
+  private getTonClient(): TonClient {
+    if (!this.tonClient) {
+      const apiKey = process.env.REACT_APP_TON_API_KEY || "";
+      // API key is optional - TON Center works without it but with lower rate limits
+      this.tonClient = new TonClient({
+        endpoint: "https://toncenter.com/api/v2/jsonRPC",
+        apiKey: apiKey || undefined, // Pass undefined if empty string
+      });
     }
+    return this.tonClient;
   }
 
   /**
-   * Get pool information for a token pair using STON.fi API
-   * Uses the by_market endpoint: GET /v1/pools/by_market/{asset0}/{asset1}
-   * This is the most reliable way to check if a pool exists without contract calls
+   * Convert human-readable amount to base units (nanoTON or token smallest units)
+   * Note: This is mainly for reference - we use toNano directly for TON
    */
-  async getPoolInfo(tokenAddress: Address): Promise<PoolInfo | null> {
-    try {
-      const apiUrl = this.getApiBaseUrl();
-      const tonAddr = Address.parse(TON_ADDRESS);
+  private toBaseUnits(amount: string, decimals: number): string {
+    const amountBN = toNano(amount);
+    // For tokens with different decimals, we need to adjust
+    if (decimals !== 9) {
+      const multiplier = new BN(10).pow(new BN(decimals - 9));
+      return amountBN.mul(multiplier).toString();
+    }
+    return amountBN.toString();
+  }
 
-      // Normalize addresses to URL-safe format for API
-      const tonAddrStr = tonAddr.toFriendly({ urlSafe: true });
+  /**
+   * Convert base units to human-readable amount
+   */
+  private fromBaseUnits(amount: string, decimals: number): string {
+    const amountBN = new BN(amount);
+    if (decimals !== 9) {
+      const divisor = new BN(10).pow(new BN(decimals - 9));
+      return fromNano(amountBN.div(divisor));
+    }
+    return fromNano(amountBN);
+  }
+
+  /**
+   * Get token metadata (decimals, etc.) from STON.fi API
+   */
+  private async getTokenMetadata(tokenAddress: Address): Promise<{ decimals: number } | null> {
+    try {
+      const apiUrl =
+        getNetwork(new URLSearchParams(window.location.search)) === "testnet"
+          ? STONFI_API_TESTNET
+          : STONFI_API_MAINNET;
       const tokenAddrStr = tokenAddress.toFriendly({ urlSafe: true });
 
-      // Use the by_market endpoint to query pool by token addresses
-      // Try both orders: TON/token and token/TON
-      let response = await fetch(`${apiUrl}/v1/pools/by_market/${tonAddrStr}/${tokenAddrStr}`);
-
-      // If not found, try reverse order
-      if (!response.ok && response.status === 404) {
-        response = await fetch(`${apiUrl}/v1/pools/by_market/${tokenAddrStr}/${tonAddrStr}`);
-      }
-
+      const response = await fetch(`${apiUrl}/v1/assets/${tokenAddrStr}`);
       if (!response.ok) {
-        // Pool doesn't exist if 404 - this is expected for new pairs
-        if (response.status === 404) {
-          return null;
-        }
-        throw new Error(`API request failed: ${response.statusText}`);
+        return null;
       }
 
-      const poolInfo: PoolInfo = await response.json();
-      return poolInfo;
+      const asset = await response.json();
+      return {
+        decimals: asset.meta?.decimals || 9, // Default to 9 if not found
+      };
     } catch (error) {
-      // If API call fails, assume pool doesn't exist
-      // This is fine - we're creating a new pair
-      console.log("Pool doesn't exist yet - this is expected for new pairs");
-      return null;
+      console.error("Error fetching token metadata:", error);
+      return { decimals: 9 }; // Default to 9 decimals
     }
   }
 
   /**
-   * Get pool address for a token pair
+   * Simulate liquidity provision using STON.fi API
+   * This handles both new pool creation and existing pool liquidity addition
+   * Following official STON.fi documentation: https://docs.ston.fi/developer-section/quickstart/liquidity
    */
-  async getPoolAddress(tokenAddress: Address): Promise<Address | null> {
+  async simulateLiquidityProvision(
+    tokenAddress: Address,
+    tonAmount: string,
+    walletAddress: string,
+  ): Promise<LiquiditySimulation> {
     try {
-      const poolInfo = await this.getPoolInfo(tokenAddress);
-      if (!poolInfo || !poolInfo.address) {
-        return null;
-      }
-      // API returns address - try parsing directly first
-      try {
-        let addres = Address.parse(poolInfo.address);
-        console.log("aqweqweddres", addres);
+      const tonAddr = Address.parse(TON_ADDRESS);
+      const tokenAddrStr = tokenAddress.toFriendly({ urlSafe: true });
+      const tonAddrStr = tonAddr.toFriendly({ urlSafe: true });
 
-        return addres;
+      // Get token metadata for correct decimals
+      const tokenMeta = await this.getTokenMetadata(tokenAddress);
+      const tokenDecimals = tokenMeta?.decimals || 9;
+
+      // Convert TON amount to base units (nanoTON)
+      const tonAmountUnits = toNano(tonAmount).toString();
+
+      // First, try to find existing pool
+      const apiUrl =
+        getNetwork(new URLSearchParams(window.location.search)) === "testnet"
+          ? STONFI_API_TESTNET
+          : STONFI_API_MAINNET;
+
+      let poolAddress: string | null = null;
+      try {
+        let response = await fetch(`${apiUrl}/v1/pools/by_market/${tonAddrStr}/${tokenAddrStr}`);
+        if (!response.ok && response.status === 404) {
+          response = await fetch(`${apiUrl}/v1/pools/by_market/${tokenAddrStr}/${tonAddrStr}`);
+        }
+        if (response.ok) {
+          const poolInfo = await response.json();
+          poolAddress = poolInfo.address;
+        }
       } catch (error) {
-        // If parsing fails, try converting URL-safe to standard format
-        const normalizedAddress = poolInfo.address.replace(/-/g, "+").replace(/_/g, "/");
-        return Address.parse(normalizedAddress);
+        // Pool doesn't exist - will create new one
+        console.log("Pool doesn't exist, will create new pool");
       }
+
+      // Use appropriate provision type based on whether pool exists
+      let simulation;
+      if (poolAddress) {
+        // Existing pool - use Arbitrary with poolAddress
+        simulation = await this.apiClient.simulateLiquidityProvision({
+          provisionType: "Arbitrary",
+          poolAddress: poolAddress,
+          tokenA: tonAddrStr,
+          tokenB: tokenAddrStr,
+          tokenAUnits: tonAmountUnits,
+          tokenBUnits: "0", // API calculates this based on current price
+          slippageTolerance: "0.01",
+          walletAddress: walletAddress,
+        });
+      } else {
+        // New pool - use Initial (creates new pool)
+        simulation = await this.apiClient.simulateLiquidityProvision({
+          provisionType: "Initial",
+          tokenA: tonAddrStr,
+          tokenB: tokenAddrStr,
+          tokenAUnits: tonAmountUnits,
+          tokenBUnits: "0", // API calculates initial ratio
+          slippageTolerance: "0.01",
+          walletAddress: walletAddress,
+        });
+      }
+
+      return simulation as LiquiditySimulation;
     } catch (error) {
-      console.error("Error getting pool address:", error);
-      return null;
+      console.error("Error simulating liquidity provision:", error);
+      throw error;
     }
   }
 
   /**
    * Create a new liquidity pool (if it doesn't exist) and add initial liquidity
+   * Uses official STON.fi SDK as per documentation
    */
   async createPoolAndAddLiquidity(
     params: CreatePoolParams,
     tonConnectUI: TonConnectUI,
   ): Promise<string> {
-    const tc = await getClient();
-    const waiter = await waitForSeqno(
-      tc.openWalletFromAddress({
-        source: Address.parse(params.walletAddress),
-      }),
-    );
+    try {
+      const network = getNetwork(new URLSearchParams(window.location.search));
+      const tonAddr = Address.parse(TON_ADDRESS);
+      const tonAddrStr = tonAddr.toFriendly({ urlSafe: true });
+      const tokenAddrStr = params.tokenAddress.toFriendly({ urlSafe: true });
 
-    const network = getNetwork(new URLSearchParams(window.location.search));
-    const routerAddress = this.getRouterAddress();
-    const tonAmountNano = toNano(params.tonAmount);
+      // Step 1: Simulate liquidity provision
+      const simulation = await this.simulateLiquidityProvision(
+        params.tokenAddress,
+        params.tonAmount,
+        params.walletAddress,
+      );
 
-    // Build payload for add_liquidity
-    // STON.fi router expects:
-    // - op: 0x2593855f (add_liquidity)
-    // - query_id: 0
-    // - user_wallet_address: Address
-    // - min_tokens: Coins (minimum tokens to receive)
-    // - min_ton: Coins (minimum TON to receive)
-    // - jetton_wallet_address: Address (token wallet address)
+      if (!simulation.router) {
+        throw new Error("Router information not available from simulation");
+      }
 
-    // First, we need to get the user's jetton wallet address
-    const jettonWalletAddress = await this.getJettonWalletAddress(
-      params.tokenAddress,
-      Address.parse(params.walletAddress),
-    );
+      // Step 2: Build transaction using SDK
+      const tonClient = this.getTonClient();
+      const routerInfo: any = simulation.router;
+      const { Router, pTON } = dexFactory(routerInfo);
+      const router = tonClient.open(Router.create(routerInfo.address));
+      const pTon = pTON.create(routerInfo.ptonMasterAddress);
 
-    const payload = beginCell()
-      .storeUint(0x2593855f, 32) // add_liquidity op code
-      .storeUint(0, 64) // query_id
-      .storeAddress(Address.parse(params.walletAddress)) // user_wallet_address
-      .storeCoins(toNano("0")) // min_tokens (slippage tolerance)
-      .storeCoins(toNano("0")) // min_ton (slippage tolerance)
-      .storeAddress(jettonWalletAddress) // jetton_wallet_address
-      .endCell();
+      const isTonAsset = (contractAddress: string) => contractAddress === tonAddrStr;
 
-    const tx: SendTransactionRequest = {
-      validUntil: Date.now() + 5 * 60 * 1000,
-      network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
-      messages: [
-        {
-          address: routerAddress.toFriendly(),
-          amount: tonAmountNano.toString(),
-          stateInit: undefined,
-          payload: payload.toBoc().toString("base64"),
-        },
-      ],
-    };
+      // Helper function to build transaction for each token
+      const buildTransaction = async (args: {
+        sendAmount: string;
+        sendTokenAddress: string;
+        otherTokenAddress: string;
+      }) => {
+        const txParams = {
+          userWalletAddress: params.walletAddress,
+          minLpOut: simulation.minLpUnits,
+          sendAmount: args.sendAmount,
+          otherTokenAddress: isTonAsset(args.otherTokenAddress)
+            ? pTon.address
+            : args.otherTokenAddress,
+        };
 
-    await tonConnectUI.sendTransaction(tx);
-    await waiter();
+        // TON requires proxy contract, Jettons use direct transfer
+        if (isTonAsset(args.sendTokenAddress)) {
+          return await router.getProvideLiquidityTonTxParams({
+            ...txParams,
+            proxyTon: pTon,
+          });
+        } else {
+          return await router.getProvideLiquidityJettonTxParams({
+            ...txParams,
+            sendTokenAddress: args.sendTokenAddress,
+          });
+        }
+      };
 
-    return routerAddress.toFriendly();
+      // Step 3: Generate transaction parameters for both tokens
+      const txParams = await Promise.all([
+        buildTransaction({
+          sendAmount: simulation.tokenAUnits,
+          sendTokenAddress: simulation.tokenA,
+          otherTokenAddress: simulation.tokenB,
+        }),
+        buildTransaction({
+          sendAmount: simulation.tokenBUnits,
+          sendTokenAddress: simulation.tokenB,
+          otherTokenAddress: simulation.tokenA,
+        }),
+      ]);
+
+      // Step 4: Format transaction messages for TonConnect
+      const messages = txParams.map((txParam) => ({
+        address: txParam.to.toString(),
+        amount: txParam.value.toString(),
+        payload: txParam.body?.toBoc().toString("base64"),
+      }));
+
+      // Step 5: Send transaction via TonConnect
+      await tonConnectUI.sendTransaction({
+        validUntil: Date.now() + 5 * 60 * 1000, // 5 minutes
+        network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
+        messages,
+      });
+
+      return simulation.poolAddress;
+    } catch (error) {
+      console.error("Error creating pool and adding liquidity:", error);
+      throw error;
+    }
   }
 
   /**
    * Add liquidity to an existing pool
    */
-  async addLiquidity(params: AddLiquidityParams, tonConnectUI: TonConnectUI): Promise<string> {
-    return this.createPoolAndAddLiquidity(
-      {
-        tokenAddress: params.tokenAddress,
-        tonAmount: params.tonAmount,
-        walletAddress: params.walletAddress,
-      },
-      tonConnectUI,
-    );
+  async addLiquidity(params: CreatePoolParams, tonConnectUI: TonConnectUI): Promise<string> {
+    return this.createPoolAndAddLiquidity(params, tonConnectUI);
   }
 
   /**
-   * Get jetton wallet address for a user
+   * Check if a pool exists for the given token pair
    */
-  private async getJettonWalletAddress(
-    jettonMaster: Address,
-    userAddress: Address,
-  ): Promise<Address> {
-    const tc = await getClient();
-
-    // Call get_wallet_address on jetton master
-    const payload = beginCell().storeAddress(userAddress).endCell();
-
+  async checkPoolExists(tokenAddress: Address): Promise<boolean> {
     try {
-      const jettonWalletAddress = await makeGetCall(
-        jettonMaster,
-        "get_wallet_address",
-        [payload],
-        ([addressCell]) => cellToAddress(addressCell as Cell),
-        tc,
-      );
+      // Try to simulate - if pool doesn't exist, simulation will still work
+      // but we can check the provisionType or poolAddress
+      const tonAddr = Address.parse(TON_ADDRESS);
+      const tonAddrStr = tonAddr.toFriendly({ urlSafe: true });
+      const tokenAddrStr = tokenAddress.toFriendly({ urlSafe: true });
 
-      return jettonWalletAddress;
+      // Try to fetch pool info from API
+      const apiUrl =
+        getNetwork(new URLSearchParams(window.location.search)) === "testnet"
+          ? STONFI_API_TESTNET
+          : STONFI_API_MAINNET;
+
+      let response = await fetch(`${apiUrl}/v1/pools/by_market/${tonAddrStr}/${tokenAddrStr}`);
+      if (!response.ok && response.status === 404) {
+        response = await fetch(`${apiUrl}/v1/pools/by_market/${tokenAddrStr}/${tonAddrStr}`);
+      }
+
+      return response.ok;
     } catch (error) {
-      console.error("Error getting jetton wallet address:", error);
-      throw error;
+      console.error("Error checking pool existence:", error);
+      return false;
     }
   }
 
