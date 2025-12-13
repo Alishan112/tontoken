@@ -1,7 +1,7 @@
 import BigNumber from "bignumber.js";
 import { BN } from "bn.js";
 import { zeroAddress } from "lib/utils";
-import { Address } from "ton";
+import { Address } from "@ton/core";
 
 export const scannerUrl = (isSandbox?: boolean, regularAddress?: boolean) => {
   if (isSandbox) {
@@ -23,7 +23,7 @@ export const getUrlParam = (name: string) => {
 export const isValidAddress = (address: string, errorText?: string) => {
   try {
     const result = Address.parse(address);
-    if (result && result.toFriendly() === zeroAddress().toFriendly()) {
+    if (result && result.toString() === zeroAddress().toString()) {
       return false;
     }
     return true;

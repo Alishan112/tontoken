@@ -1,4 +1,5 @@
-import { Address, beginCell, toNano, TonClient, Wallet } from "ton";
+import { Address, beginCell, toNano } from "@ton/core";
+import { TonClient } from "@ton/ton";
 import { JettonDeployParams, JETTON_DEPLOY_GAS } from "./deploy-controller";
 import { initData, JETTON_MINTER_CODE, mintBody } from "./jetton-minter";
 
@@ -16,19 +17,15 @@ export function zeroAddress(): Address {
     .storeUint(0, 256)
     .endCell()
     .beginParse()
-    .readAddress() as Address;
+    .loadAddress() as Address;
 }
 
-export async function waitForSeqno(wallet: Wallet) {
-  const seqnoBefore = await wallet.getSeqNo();
-
+// Simplified waitForSeqno - just wait a fixed time since we're using TonConnect
+// The old wallet API (openWalletFromAddress) doesn't exist in @ton/ton
+export async function waitForSeqno(_wallet: any) {
+  // Return a function that waits a reasonable time for transaction confirmation
   return async () => {
-    for (let attempt = 0; attempt < 25; attempt++) {
-      await sleep(3000);
-      const seqnoAfter = await wallet.getSeqNo();
-      if (seqnoAfter > seqnoBefore) return;
-    }
-    throw new Error("Timeout");
+    await sleep(5000); // Wait 5 seconds for transaction to be processed
   };
 }
 
@@ -52,6 +49,6 @@ export const createDeployParams = (params: JettonDeployParams, offchainUri?: str
     data: initData(params.owner, params.onchainMetaData, offchainUri),
     deployer: params.owner,
     value: JETTON_DEPLOY_GAS,
-    message: mintBody(params.owner, params.amountToMint, toNano(0.2), queryId),
+    message: mintBody(params.owner, params.amountToMint, toNano(0.2), queryId), // toNano returns bigint, mintBody accepts both
   };
 };

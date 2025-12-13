@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Address } from "ton";
+import { Address } from "@ton/core";
 import { Box, Fade, Link, Typography } from "@mui/material";
 import { useTonAddress, useTonConnectUI } from "@tonconnect/ui-react";
 import {

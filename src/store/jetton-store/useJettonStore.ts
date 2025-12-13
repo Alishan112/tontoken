@@ -6,7 +6,7 @@ import { jettonDeployController } from "lib/deploy-controller";
 import { zeroAddress } from "lib/utils";
 import { useCallback } from "react";
 import { useRecoilState, useResetRecoilState } from "recoil";
-import { Address } from "ton";
+import { Address } from "@ton/core";
 import { getUrlParam, isValidAddress } from "utils";
 import { jettonStateAtom } from ".";
 
@@ -68,7 +68,7 @@ function useJettonStore() {
 
         return;
       }
-      const _adminAddress = result.minter.admin?.toFriendly() ?? zeroAddress().toFriendly();
+      const _adminAddress = result.minter.admin?.toString() ?? zeroAddress().toString();
       const adminAddress = Address.parse(_adminAddress);
       const admin = (isMyWallet && userAddress && adminAddress.equals(userAddress)) || false;
 
@@ -118,12 +118,12 @@ function useJettonStore() {
           adminRevokedOwnership: zeroAddress().equals(adminAddress),
           isAdmin: admin,
           decimals: result.minter.metadata.decimals || "9",
-          adminAddress: adminAddress.toFriendly({ urlSafe: true, bounceable: false }),
+          adminAddress: adminAddress.toString({ urlSafe: true, bounceable: false }),
           balance: result.jettonWallet ? result.jettonWallet.balance : undefined,
-          jettonWalletAddress: result.jettonWallet?.jWalletAddress?.toFriendly(),
+          jettonWalletAddress: result.jettonWallet?.jWalletAddress?.toString(),
           jettonMaster: jettonAddress,
           isMyWallet,
-          selectedWalletAddress: address?.toFriendly({ urlSafe: true, bounceable: false }),
+          selectedWalletAddress: address?.toString({ urlSafe: true, bounceable: false }),
         };
       });
     } catch (error) {

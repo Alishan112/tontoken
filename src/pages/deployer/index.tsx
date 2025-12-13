@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Address } from "ton";
+import { Address } from "@ton/core";
 import { Box, Fade, Link, Typography } from "@mui/material";
 import { jettonDeployController, JettonDeployParams } from "lib/deploy-controller";
 import WalletConnection from "services/wallet-connection";
@@ -64,9 +64,9 @@ function DeployerPage() {
     };
     setIsLoading(true);
     const deployParams = createDeployParams(params, data.offchainUri);
-    console.log('deployParams', deployParams);
+    console.log("deployParams", deployParams);
     const contractAddress = new ContractDeployer().addressForContract(deployParams);
-console.log('contractAddress', contractAddress);
+    console.log("contractAddress", contractAddress);
     const isDeployed = await WalletConnection.isContractDeployed(contractAddress);
 
     if (isDeployed) {
@@ -88,7 +88,7 @@ console.log('contractAddress', contractAddress);
       analytics.sendEvent(
         AnalyticsCategory.DEPLOYER_PAGE,
         AnalyticsAction.DEPLOY,
-        contractAddress.toFriendly(),
+        contractAddress.toString(),
       );
 
       navigate(`${ROUTES.jetton}/${Address.normalize(result)}`);

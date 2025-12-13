@@ -3,7 +3,7 @@ import { onchainFormSpec } from "pages/deployer/data";
 import { Form } from "components/form";
 import { JettonStoreState } from "store/jetton-store";
 import { jettonDeployController } from "lib/deploy-controller";
-import { Address } from "ton";
+import { Address } from "@ton/core";
 import useNotification from "hooks/useNotification";
 import { useTonAddress, useTonConnectUI } from "@tonconnect/ui-react";
 import { useState } from "react";

@@ -1,7 +1,7 @@
 import useNotification from "hooks/useNotification";
 import { jettonDeployController } from "lib/deploy-controller";
 import useJettonStore from "store/jetton-store/useJettonStore";
-import { Address } from "ton";
+import { Address } from "@ton/core";
 import { AppButton } from "components/appButton";
 import { useState } from "react";
 import { CenteringWrapper } from "components/footer/styled";
