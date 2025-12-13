@@ -1,7 +1,8 @@
 import { useSearchParams } from "react-router-dom";
 
 export function getNetwork(params: URLSearchParams) {
-  return params.has("testnet") ? "testnet" : "mainnet";
+  // Default to testnet if no network parameter is specified
+  return params.has("mainnet") ? "mainnet" : "testnet";
 }
 
 export function useNetwork(): { network: "mainnet" | "testnet" } {

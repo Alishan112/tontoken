@@ -1,6 +1,8 @@
 import BN from "bn.js";
 import { Address, Cell, contractAddress, StateInit } from "ton";
 import { SendTransactionRequest, TonConnectUI } from "@tonconnect/ui-react";
+import { CHAIN } from "@tonconnect/sdk";
+import { getNetwork } from "./hooks/useNetwork";
 
 interface ContractDeployDetails {
   deployer: Address;
@@ -28,8 +30,10 @@ export class ContractDeployer {
     let cell = new Cell();
     new StateInit({ data: params.data, code: params.code }).writeTo(cell);
     if (!params.dryRun) {
+      const network = getNetwork(new URLSearchParams(window.location.search));
       const tx: SendTransactionRequest = {
         validUntil: Date.now() + 5 * 60 * 1000,
+        network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
         messages: [
           {
             address: _contractAddress.toFriendly(),

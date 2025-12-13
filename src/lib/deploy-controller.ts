@@ -15,6 +15,8 @@ import { readJettonMetadata, changeAdminBody, JettonMetaDataKeys } from "./jetto
 import { getClient } from "./get-ton-client";
 import { cellToAddress, makeGetCall } from "./make-get-call";
 import { SendTransactionRequest, TonConnectUI } from "@tonconnect/ui-react";
+import { CHAIN } from "@tonconnect/sdk";
+import { getNetwork } from "./hooks/useNetwork";
 
 export const JETTON_DEPLOY_GAS = toNano(0.25);
 
@@ -96,8 +98,10 @@ class JettonDeployController {
       }),
     );
 
+    const network = getNetwork(new URLSearchParams(window.location.search));
     const tx: SendTransactionRequest = {
       validUntil: Date.now() + 5 * 60 * 1000,
+      network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
       messages: [
         {
           address: contractAddress.toFriendly(),
@@ -126,8 +130,10 @@ class JettonDeployController {
       }),
     );
 
+    const network = getNetwork(new URLSearchParams(window.location.search));
     const tx: SendTransactionRequest = {
       validUntil: Date.now() + 5 * 60 * 1000,
+      network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
       messages: [
         {
           address: jettonMaster.toFriendly(),
@@ -159,8 +165,10 @@ class JettonDeployController {
       }),
     );
 
+    const network = getNetwork(new URLSearchParams(window.location.search));
     const tx: SendTransactionRequest = {
       validUntil: Date.now() + 5 * 60 * 1000,
+      network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
       messages: [
         {
           address: ownerJettonWallet,
@@ -192,8 +200,10 @@ class JettonDeployController {
       }),
     );
 
+    const network = getNetwork(new URLSearchParams(window.location.search));
     const tx: SendTransactionRequest = {
       validUntil: Date.now() + 5 * 60 * 1000,
+      network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
       messages: [
         {
           address: jettonAddress,
@@ -271,8 +281,10 @@ class JettonDeployController {
       }),
     );
     const body = updateMetadataBody(buildJettonOnchainMetadata(data));
+    const network = getNetwork(new URLSearchParams(window.location.search));
     const tx: SendTransactionRequest = {
       validUntil: Date.now() + 5 * 60 * 1000,
+      network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
       messages: [
         {
           address: contractAddress.toFriendly(),
@@ -303,8 +315,10 @@ class JettonDeployController {
       }),
     );
 
+    const network = getNetwork(new URLSearchParams(window.location.search));
     const tx: SendTransactionRequest = {
       validUntil: Date.now() + 5 * 60 * 1000,
+      network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
       messages: [
         {
           address: contractAddress.toFriendly(),
