@@ -21,6 +21,7 @@ const TON_ADDRESS = "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c";
 export interface CreatePoolParams {
   tokenAddress: Address;
   tonAmount: string; // TON amount in human-readable format (e.g., "10")
+  tokenAmount?: string; // Token amount in human-readable format (required for Initial pool creation)
   walletAddress: string;
 }
 
@@ -96,22 +97,45 @@ class StonFiService {
   }
 
   /**
-   * Get token metadata (decimals, etc.) from STON.fi API
+   * Get token metadata (decimals, etc.) from STON.fi RPC
    */
   private async getTokenMetadata(tokenAddress: Address): Promise<{ decimals: number } | null> {
     try {
-      const apiUrl =
-        getNetwork(new URLSearchParams(window.location.search)) === "testnet"
-          ? STONFI_API_TESTNET
-          : STONFI_API_MAINNET;
+      const rpcUrl = "https://rpc.ston.fi/";
       const tokenAddrStr = tokenAddress.toFriendly({ urlSafe: true });
 
-      const response = await fetch(`${apiUrl}/v1/assets/${tokenAddrStr}`);
+      const response = await fetch(rpcUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 7,
+          method: "asset.query",
+          params: {
+            condition:
+              "asset:wallet_has_balance | asset:default_symbol | !(asset:blacklisted | asset:liquidity:no)",
+            search_terms: [tokenAddrStr],
+            limit: 50,
+          },
+        }),
+      });
+
       if (!response.ok) {
         return null;
       }
 
-      const asset = await response.json();
+      const rpcResponse = await response.json();
+      const assets = rpcResponse?.result?.assets || [];
+
+      if (assets.length === 0) {
+        return null;
+      }
+
+      // Find the asset matching our token address
+      const asset = assets.find((a: any) => a.contract_address === tokenAddrStr) || assets[0];
+
       return {
         decimals: asset.meta?.decimals || 9, // Default to 9 if not found
       };
@@ -130,6 +154,7 @@ class StonFiService {
     tokenAddress: Address,
     tonAmount: string,
     walletAddress: string,
+    tokenAmount?: string,
   ): Promise<LiquiditySimulation> {
     try {
       const tonAddr = Address.parse(TON_ADDRESS);
@@ -142,6 +167,12 @@ class StonFiService {
 
       // Convert TON amount to base units (nanoTON)
       const tonAmountUnits = toNano(tonAmount).toString();
+
+      // Convert token amount to base units if provided
+      let tokenAmountUnits: string | undefined;
+      if (tokenAmount) {
+        tokenAmountUnits = this.toBaseUnits(tokenAmount, tokenDecimals);
+      }
 
       // First, try to find existing pool
       const apiUrl =
@@ -180,12 +211,18 @@ class StonFiService {
         });
       } else {
         // New pool - use Initial (creates new pool)
+        // For Initial pools, both token amounts are required
+        if (!tokenAmountUnits) {
+          throw new Error(
+            "Token amount is required for initial pool creation. Please provide both TON and token amounts.",
+          );
+        }
         simulation = await this.apiClient.simulateLiquidityProvision({
           provisionType: "Initial",
           tokenA: tonAddrStr,
           tokenB: tokenAddrStr,
           tokenAUnits: tonAmountUnits,
-          tokenBUnits: "0", // API calculates initial ratio
+          tokenBUnits: tokenAmountUnits, // Both amounts required for Initial pools
           slippageTolerance: "0.01",
           walletAddress: walletAddress,
         });
@@ -217,6 +254,7 @@ class StonFiService {
         params.tokenAddress,
         params.tonAmount,
         params.walletAddress,
+        params.tokenAmount,
       );
 
       if (!simulation.router) {

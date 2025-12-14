@@ -27,6 +27,7 @@ function LiquidityPage() {
 
   const [tokenAddress, setTokenAddress] = useState<string>("");
   const [tonAmount, setTonAmount] = useState<number | undefined>(undefined);
+  const [tokenAmount, setTokenAmount] = useState<number | undefined>(undefined);
   const [useDeepLink, setUseDeepLink] = useState(true); // Default to deep link method
 
   const isMainnet = network === "mainnet";
@@ -76,6 +77,7 @@ function LiquidityPage() {
           {
             tokenAddress: tokenAddr,
             tonAmount: tonAmount.toString(),
+            tokenAmount: tokenAmount?.toString(),
             walletAddress: walletAddress,
           },
           tonConnectUI,
@@ -160,6 +162,24 @@ function LiquidityPage() {
                       Amount of TON to add to the liquidity pool
                     </Typography>
                   </Box>
+
+                  {!useDeepLink && (
+                    <Box mb={3}>
+                      <AppNumberInput
+                        label="Token Amount"
+                        onChange={(value: number) => setTokenAmount(value)}
+                        value={tokenAmount}
+                      />
+                      <Typography
+                        variant="caption"
+                        color="#728A96"
+                        sx={{ mt: 0.5, display: "block" }}>
+                        Amount of tokens to add to the liquidity pool. This is required for creating
+                        a new pool. If the pool already exists, you can leave this empty and the
+                        system will calculate the token amount based on the current price.
+                      </Typography>
+                    </Box>
+                  )}
 
                   <Box mb={3}>
                     <Box sx={{ display: "flex", alignItems: "center", mb: 1 }}>
