@@ -69,7 +69,23 @@ export async function makeGetCall<T>(
   parser: (stack: GetResponseValue[]) => T,
   tonClient: TonClient,
 ) {
-  const result = await tonClient.callGetMethod(address!, name, _prepareParams(params));
-
-  return parser(_parseGetMethodCall(result.stack));
+  try {
+    const result = await tonClient.callGetMethod(address!, name, _prepareParams(params));
+    return parser(_parseGetMethodCall(result.stack));
+  } catch (error: any) {
+    // Enhance error message with more context
+    const errorMessage = error?.message || String(error);
+    if (
+      errorMessage.includes("exit_code") ||
+      errorMessage.includes("exitCode") ||
+      errorMessage.includes("exit code")
+    ) {
+      throw new Error(
+        `Unable to execute get method '${name}' on contract ${address?.toString()}. ` +
+          `Error: ${errorMessage}. ` +
+          `Make sure the contract is deployed and the method parameters are correct.`,
+      );
+    }
+    throw error;
+  }
 }

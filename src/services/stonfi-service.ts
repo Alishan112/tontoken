@@ -501,7 +501,7 @@ class StonFiService {
 
       // Step 5: Send transaction via TonConnect
       await tonConnectUI.sendTransaction({
-        validUntil: Date.now() + 5 * 60 * 1000, // 5 minutes
+        validUntil: Math.floor(Date.now() / 1000) + 5 * 60, // Convert to seconds (5 minutes)
         network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
         messages,
       });

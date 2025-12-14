@@ -1,5 +1,5 @@
 import BN from "bn.js";
-import { Address, Cell, contractAddress, beginCell } from "@ton/core";
+import { Address, Cell, contractAddress, beginCell, storeStateInit } from "@ton/core";
 import { SendTransactionRequest, TonConnectUI } from "@tonconnect/ui-react";
 import { CHAIN } from "@tonconnect/sdk";
 import { getNetwork } from "./hooks/useNetwork";
@@ -26,31 +26,44 @@ export class ContractDeployer {
     tonConnection: TonConnectUI,
   ): Promise<Address> {
     const _contractAddress = this.addressForContract(params);
-    const cell = beginCell()
-      .storeUint(0, 1) // split_depth
-      .storeUint(0, 1) // special
-      .storeRef(params.code)
-      .storeRef(params.data)
+    // Use storeStateInit to properly serialize StateInit like the old version
+    const stateInitCell = beginCell()
+      .store(
+        storeStateInit({
+          code: params.code,
+          data: params.data,
+        }),
+      )
       .endCell();
+
     if (!params.dryRun) {
       const network = getNetwork(new URLSearchParams(window.location.search));
-      const tx: SendTransactionRequest = {
-        validUntil: Date.now() + 5 * 60 * 1000,
-        network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
-        messages: [
-          {
-            address: _contractAddress.toString(),
-            amount: (typeof params.value === "bigint"
-              ? params.value
-              : params.value.toString()
-            ).toString(),
-            stateInit: cell.toBoc().toString("base64"),
-            payload: params.message?.toBoc().toString("base64"),
-          },
-        ],
+      const message: any = {
+        address: _contractAddress.toString(),
+        amount: (typeof params.value === "bigint"
+          ? params.value
+          : params.value.toString()
+        ).toString(),
+        stateInit: stateInitCell.toBoc().toString("base64"),
       };
 
-      await tonConnection.sendTransaction(tx);
+      // Only include payload if message exists
+      if (params.message) {
+        message.payload = params.message.toBoc().toString("base64");
+      }
+
+      const tx: SendTransactionRequest = {
+        validUntil: Math.floor(Date.now() / 1000) + 5 * 60, // Convert to seconds (5 minutes)
+        network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
+        messages: [message],
+      };
+
+      try {
+        await tonConnection.sendTransaction(tx);
+      } catch (error) {
+        console.error("TON Connect transaction error:", error);
+        throw error;
+      }
     }
 
     return _contractAddress;

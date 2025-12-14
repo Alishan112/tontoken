@@ -2,7 +2,7 @@ import BN from "bn.js";
 import { Address, beginCell, Cell, toNano } from "@ton/core";
 import { ContractDeployer } from "./contract-deployer";
 
-import { createDeployParams, waitForContractDeploy, waitForSeqno } from "./utils";
+import { createDeployParams, waitForContractDeploy, waitForSeqno, sleep } from "./utils";
 import { zeroAddress } from "./utils";
 import {
   buildJettonOnchainMetadata,
@@ -61,21 +61,66 @@ class JettonDeployController {
     const deployParams = createDeployParams(params, params.offchainUri);
     const contractAddr = contractDeployer.addressForContract(deployParams);
 
-    if (await tc.isContractDeployed(contractAddr)) {
-      // params.onProgress?.(JettonDeployState.ALREADY_DEPLOYED);
-    } else {
+    const wasAlreadyDeployed = await tc.isContractDeployed(contractAddr);
+
+    if (!wasAlreadyDeployed) {
       await contractDeployer.deployContract(deployParams, tonConnection);
       // params.onProgress?.(JettonDeployState.AWAITING_MINTER_DEPLOY);
+      // Wait for contract to be deployed - this also gives time for the transaction to be confirmed
       await waitForContractDeploy(contractAddr, tc);
+
+      // Wait for the initial mint transaction to be processed
+      // The contract needs to process the deploy message (which includes the mint) before get methods work
+      // Even though the contract is deployed, the mint transaction included in the deployment message
+      // needs additional time to be fully processed by the contract
+      await sleep(15000); // Wait 15 seconds to ensure mint transaction is processed
     }
 
-    const ownerJWalletAddr = await makeGetCall(
-      contractAddr,
-      "get_wallet_address",
-      [beginCell().storeAddress(params.owner).endCell()],
-      ([addr]) => (addr as Cell).beginParse().loadAddress()!,
-      tc,
-    );
+    // Retry logic for get method calls in case contract isn't fully ready
+    // Exit code 7 usually means contract isn't initialized yet or transaction not processed
+    let ownerJWalletAddr: Address | undefined;
+    let retries = 20; // Increased retries to 20 for more robustness
+    let lastError: any;
+
+    while (retries > 0) {
+      try {
+        // Verify contract is still deployed before calling get method
+        const isDeployed = await tc.isContractDeployed(contractAddr);
+        if (!isDeployed) {
+          throw new Error("Contract is not deployed");
+        }
+
+        ownerJWalletAddr = await makeGetCall(
+          contractAddr,
+          "get_wallet_address",
+          [beginCell().storeAddress(params.owner).endCell()],
+          ([addr]) => (addr as Cell).beginParse().loadAddress()!,
+          tc,
+        );
+        break;
+      } catch (error: any) {
+        lastError = error;
+        retries--;
+        if (retries === 0) {
+          break;
+        }
+        // Wait longer between retries - contract needs time to initialize and process transactions
+        // Exit code 7 often means the contract hasn't processed the initial transaction yet
+        // Increase wait time to give the network more time to process
+        await sleep(6000); // Increased wait time between retries
+      }
+    }
+
+    if (!ownerJWalletAddr) {
+      const errorMsg = lastError?.message || "Unknown error";
+      throw new Error(
+        `Failed to get owner jetton wallet address after multiple attempts. ` +
+          `Contract address: ${contractAddr.toString()}. ` +
+          `Error: ${errorMsg}. ` +
+          `This usually means the contract hasn't finished processing the initial deployment transaction. ` +
+          `Please wait a few more seconds and try refreshing the page, or check the transaction status on a TON explorer.`,
+      );
+    }
 
     // params.onProgress?.(JettonDeployState.AWAITING_JWALLET_DEPLOY);
     await waitForContractDeploy(ownerJWalletAddr, tc);
@@ -96,7 +141,7 @@ class JettonDeployController {
 
     const network = getNetwork(new URLSearchParams(window.location.search));
     const tx: SendTransactionRequest = {
-      validUntil: Date.now() + 5 * 60 * 1000,
+      validUntil: Math.floor(Date.now() / 1000) + 5 * 60, // Convert to seconds (5 minutes)
       network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
       messages: [
         {
@@ -125,7 +170,7 @@ class JettonDeployController {
 
     const network = getNetwork(new URLSearchParams(window.location.search));
     const tx: SendTransactionRequest = {
-      validUntil: Date.now() + 5 * 60 * 1000,
+      validUntil: Math.floor(Date.now() / 1000) + 5 * 60, // Convert to seconds (5 minutes)
       network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
       messages: [
         {
@@ -156,7 +201,7 @@ class JettonDeployController {
 
     const network = getNetwork(new URLSearchParams(window.location.search));
     const tx: SendTransactionRequest = {
-      validUntil: Date.now() + 5 * 60 * 1000,
+      validUntil: Math.floor(Date.now() / 1000) + 5 * 60, // Convert to seconds (5 minutes)
       network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
       messages: [
         {
@@ -187,7 +232,7 @@ class JettonDeployController {
 
     const network = getNetwork(new URLSearchParams(window.location.search));
     const tx: SendTransactionRequest = {
-      validUntil: Date.now() + 5 * 60 * 1000,
+      validUntil: Math.floor(Date.now() / 1000) + 5 * 60, // Convert to seconds (5 minutes)
       network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
       messages: [
         {
@@ -265,7 +310,7 @@ class JettonDeployController {
     const body = updateMetadataBody(buildJettonOnchainMetadata(data));
     const network = getNetwork(new URLSearchParams(window.location.search));
     const tx: SendTransactionRequest = {
-      validUntil: Date.now() + 5 * 60 * 1000,
+      validUntil: Math.floor(Date.now() / 1000) + 5 * 60, // Convert to seconds (5 minutes)
       network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
       messages: [
         {
@@ -296,7 +341,7 @@ class JettonDeployController {
 
     const network = getNetwork(new URLSearchParams(window.location.search));
     const tx: SendTransactionRequest = {
-      validUntil: Date.now() + 5 * 60 * 1000,
+      validUntil: Math.floor(Date.now() / 1000) + 5 * 60, // Convert to seconds (5 minutes)
       network: network === "testnet" ? CHAIN.TESTNET : CHAIN.MAINNET,
       messages: [
         {
